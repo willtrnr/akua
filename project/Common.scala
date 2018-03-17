@@ -8,9 +8,8 @@ object Common {
   val commonSettings = Seq(
     organization := "net.archwill.akua",
 
-    scalaOrganization := "org.typelevel",
-    scalaVersion := "2.12.4-bin-typelevel-4",
-    crossScalaVersions := Seq("2.11.11-bin-typelevel-4", "2.12.4-bin-typelevel-4"),
+    scalaVersion := "2.12.4",
+    crossScalaVersions := Seq("2.11.11", "2.12.4"),
 
     libraryDependencies ++= Seq(
       "org.scalatest" %% "scalatest" % scalaTestVersion
