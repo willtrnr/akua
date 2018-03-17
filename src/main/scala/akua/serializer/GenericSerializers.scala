@@ -1,4 +1,4 @@
-package akua
+package akua.serializer
 
 import shapeless.{Generic, HList, HNil, ::}
 

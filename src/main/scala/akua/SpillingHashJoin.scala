@@ -11,6 +11,8 @@ import akka.stream.{Attributes, FlowShape, Graph, Inlet, Outlet, SourceShape}
 
 import org.mapdb.{DB, DBMaker, Serializer}
 
+import akua.serializer.StdSerializers
+
 private[akua] final class SpillingHashJoin[L, R, A](keySer: Serializer[A], valueSer: Serializer[R], extractKeyL: L => A, extractKeyR: R => A) extends GraphStage[JoinShape[L, R]] {
 
   import scala.collection.JavaConverters._

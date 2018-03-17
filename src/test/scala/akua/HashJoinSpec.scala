@@ -16,7 +16,7 @@ class HashJoinSpec extends TestKit(ActorSystem("HashJoinSpec")) with WordSpecLik
 
     "join based on a hashed key" in {
       HashJoin.full(Source(List(3, 7, 7, 1, 0, 9, 2, 3)), Source(List(8, 2, 2, 3, 7)))(identity, identity)
-        .runWith(TestSink.probe[(Option[Int], Option[Int])])
+        .runWith(TestSink.probe[JoinShape.Full[Int, Int]])
         .request(Long.MaxValue)
         .expectNext((Some(3), Some(3)))
         .expectNext((Some(7), Some(7)))
@@ -28,6 +28,26 @@ class HashJoinSpec extends TestKit(ActorSystem("HashJoinSpec")) with WordSpecLik
         .expectNext((Some(2), Some(2)))
         .expectNext((Some(3), Some(3)))
         .expectNext((None, Some(8)))
+        .expectComplete()
+    }
+
+    "pass left through when right is empty" in {
+      HashJoin.full(Source(List(1, 2, 3)), Source.empty[Int])(identity, identity)
+        .runWith(TestSink.probe[JoinShape.Full[Int, Int]])
+        .request(Long.MaxValue)
+        .expectNext((Some(1), None))
+        .expectNext((Some(2), None))
+        .expectNext((Some(3), None))
+        .expectComplete()
+    }
+
+    "pass right through when left is empty" in {
+      HashJoin.full(Source.empty[Int], Source(List(1, 2, 3)))(identity, identity)
+        .runWith(TestSink.probe[JoinShape.Full[Int, Int]])
+        .request(Long.MaxValue)
+        .expectNext((None, Some(1)))
+        .expectNext((None, Some(2)))
+        .expectNext((None, Some(3)))
         .expectComplete()
     }
 

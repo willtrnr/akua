@@ -1,8 +1,9 @@
 package akua
 
 object Akua extends
-  StdSerializers with TupleSerializers with GenericSerializers with
+  serializer.AllSerializers with
   ToDistinctOps with
   ToExistsOps with
   ToHashJoinOps with
+  ToNotExistsOps with
   ToSpillingHashJoinOps

@@ -1,4 +1,4 @@
-package akua
+package akua.serializer
 
 import org.mapdb.{DataIO, DataInput2, DataOutput2, Serializer}
 
