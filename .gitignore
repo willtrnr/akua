@@ -1,0 +1,11 @@
+*.sublime-*
+*~
+.*.swp
+.ensime*
+.env
+.idea
+.ivy2
+.sbtopts
+.~*
+project/project
+target/

@@ -1,0 +1,42 @@
+package akua
+
+import org.mapdb.{DataIO, DataInput2, DataOutput2, Serializer}
+
+trait TupleSerializers {
+
+  [#implicit def tuple1Serializer[[#T1#]](implicit [#s1: Serializer[T1]#]): Serializer[Tuple1[[#T1#]]] = new Serializer[Tuple1[[#T1#]]] {
+
+    override def serialize(out: DataOutput##2, value: Tuple1[[#T1#]]): Unit = {
+      [#s1.serialize(out, value._1)#
+      ]
+    }
+
+    override def deserialize(input: DataInput##2, available: Int): Tuple1[[#T1#]] =
+      Tuple1(
+        [#s1.deserialize(input, -##1)#,
+        ]
+      )
+
+    override val fixedSize: Int =
+      if ([#s1.fixedSize >= ##0# && ]) [#s1.fixedSize# + ] else -##1
+
+    override val isTrusted: Boolean =
+      [#s1.isTrusted# && ]
+
+    override def hashCode(o: Tuple1[[#T1#]], seed: Int): Int = {
+      var s = seed
+      [#s += DataIO.intHash(s1.hashCode(o._1, s))#
+      ]
+      s
+    }
+
+    override def clone(value: Tuple1[[#T1#]]): Tuple1[[#T1#]] =
+      Tuple1([#s1.clone(value._1)#])
+
+  }#
+
+  ]
+
+}
+
+object TupleSerializers extends TupleSerializers
