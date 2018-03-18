@@ -51,6 +51,13 @@ class HashJoinSpec extends TestKit(ActorSystem("HashJoinSpec")) with WordSpecLik
         .expectComplete()
     }
 
+    "output nothing when both inputs are empty" in {
+      HashJoin.full(Source.empty[Int], Source.empty[Int])(identity, identity)
+        .runWith(TestSink.probe[JoinShape.Full[Int, Int]])
+        .request(Long.MaxValue)
+        .expectComplete()
+    }
+
   }
 
 }

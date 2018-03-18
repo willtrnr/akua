@@ -53,6 +53,13 @@ class SpillingHashJoinSpec extends TestKit(ActorSystem("SpillingHashJoinSpec")) 
         .expectComplete()
     }
 
+    "output nothing when both inputs are empty" in {
+      SpillingHashJoin.full(Source.empty[Int], Source.empty[Int])(identity, identity)
+        .runWith(TestSink.probe[JoinShape.Full[Int, Int]])
+        .request(Long.MaxValue)
+        .expectComplete()
+    }
+
   }
 
 }
