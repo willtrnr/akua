@@ -2,7 +2,7 @@ package akua
 
 import akka.NotUsed
 import akka.stream.scaladsl.{Flow, GraphDSL, SubFlow, Source}
-import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
+import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler}
 import akka.stream.{Attributes, FlowShape, Graph, Inlet, Outlet, SourceShape}
 
 private[akua] final class MergeJoin[L, R, A](extractKeyL: L => A, extractKeyR: R => A, ord: Ordering[A]) extends GraphStage[JoinShape[L, R]] {
@@ -13,19 +13,125 @@ private[akua] final class MergeJoin[L, R, A](extractKeyL: L => A, extractKeyR: R
 
   override val shape: JoinShape[L, R] = JoinShape(left, right, out)
 
-  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with OutHandler {
+  override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
+
+    def collectGroup[T](in: Inlet[T], getKey: T => A)
+                       (key: A, buffer: Vector[T])
+                       (andThen: (A, Vector[T], Option[(A, T)]) => Unit): InHandler = new InHandler {
+
+      override def onPush(): Unit = {
+        val e = grab(in)
+        val k = getKey(e)
+        if (ord.equiv(k, key)) {
+          setHandler(in, collectGroup(in, getKey)(k, buffer :+ e)(andThen))
+        } else {
+          andThen(key, buffer, Some((k, e)))
+        }
+      }
+
+      override def onUpstreamFinish(): Unit = {
+        andThen(key, buffer, None)
+      }
+
+    }
+
+    val collectLeft = collectGroup(left, extractKeyL) _
+
+    val collectRight = collectGroup(right, extractKeyR) _
+
+    val switchToLeft: (A, Vector[R], Option[(A, R)]) => Unit = { (key, rows, next) =>
+      if (isClosed(left)) {
+        emitMultiple(
+          out,
+          rows.map(v => (None, Some(v))),
+          () => {
+            // TODO: Make this its own thing I guess
+            next map { case (k, v) =>
+              setHandler(right, collectRight(k, Vector(v))(switchToLeft))
+              setHandler(left, ignoreTerminateInput)
+            } getOrElse {
+              completeStage()
+            }
+          }
+        )
+      } else {
+        setHandler(left, collectLeft(key, Vector.empty)(outputLeft(rows, next)))
+        setHandler(right, ignoreTerminateInput)
+      }
+    }
+
+    val switchToRight: (A, Vector[L], Option[(A, L)]) => Unit = { (key, rows, next) =>
+      if (isClosed(right)) {
+        emitMultiple(
+          out,
+          rows.map(v => (Some(v), None)),
+          () => {
+            // TODO: Make this its own thing I guess
+            next map { case (k, v) =>
+              setHandler(left, collectLeft(k, Vector(v))(switchToRight))
+              setHandler(right, ignoreTerminateInput)
+            } getOrElse {
+              completeStage()
+            }
+          }
+        )
+      } else {
+        setHandler(left, ignoreTerminateInput)
+        setHandler(right, collectRight(key, Vector.empty)(outputRight(rows, next)))
+      }
+    }
+
+    val outputLeft = { (rightRows: Vector[R], rightNext: Option[(A, R)]) => (key: A, leftRows: Vector[L], leftNext: Option[(A, L)]) =>
+      emitMultiple(
+        out,
+        for (l <- leftRows; r <- rightRows) yield (Some(l), Some(r)),
+        () => {
+
+          // TODO
+        }
+      )
+    }
+
+    val outputRight = { (leftRows: Vector[L], leftNext: Option[(A, L)]) => (key: A, rightRows: Vector[R], rightNext: Option[(A, R)]) =>
+      emitMultiple(
+        out,
+        for (l <- leftRows; r <- rightRows) yield (Some(l), Some(r)),
+        () => {
+          // TODO
+        }
+      )
+    }
 
     setHandler(left, new InHandler {
-      override def onPush(): Unit = ()
+
+      override def onPush(): Unit = {
+        val e = grab(left)
+        val k = extractKeyL(e)
+        setHandler(left, collectLeft(k, Vector(e))(switchToRight))
+        setHandler(right, ignoreTerminateInput)
+      }
+
+      override def onUpstreamFinish(): Unit = {
+        // TODO
+      }
+
     })
 
     setHandler(right, new InHandler {
-      override def onPush(): Unit = ()
+      override def onPush(): Unit = {
+        val e = grab(right)
+        val k = extractKeyR(e)
+        setHandler(left, ignoreTerminateInput)
+        setHandler(right, collectRight(k, Vector(e))(switchToLeft))
+      }
+
+      override def onUpstreamFinish(): Unit = {
+        // TODO
+      }
+
     })
 
-    override def onPull(): Unit = ()
-
-    setHandler(out, this)
+    setHandler(out, eagerTerminateOutput)
 
   }
 
