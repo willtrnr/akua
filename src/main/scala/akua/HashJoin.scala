@@ -125,11 +125,13 @@ object HashJoin {
 
 private[akua] trait HashJoinOps[Out, Mat] {
 
-  type Repr[O] <: akka.stream.scaladsl.FlowOps[O, Mat] { type Repr[OO] = HashJoinOps.this.Repr[OO] }
+  type Repr[O] <: akka.stream.scaladsl.FlowOps[O, Mat] {
+    type Repr[OO] <: HashJoinOps.this.Repr[OO]
+  }
 
   protected def self: Repr[Out]
 
-  private[this] def fullJoinGraph[Out2, A, M](right: Graph[SourceShape[Out2], M])(lf: Out => A, rf: Out2 => A): Graph[FlowShape[Out, JoinShape.Full[Out, Out2]], M] =
+  private[this] def fullJoinGraph[Out2, Mat2, A](right: Graph[SourceShape[Out2], Mat2])(lf: Out => A, rf: Out2 => A): Graph[FlowShape[Out, JoinShape.Full[Out, Out2]], Mat2] =
     GraphDSL.create(right) { implicit b => r =>
       import GraphDSL.Implicits._
       val join = b.add(HashJoin(lf, rf))

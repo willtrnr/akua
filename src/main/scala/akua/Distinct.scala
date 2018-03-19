@@ -22,24 +22,28 @@ object Distinct {
 }
 
 private[akua] trait DistinctOps[Out, Mat] {
-  type Repr[O] <: akka.stream.scaladsl.FlowOps[O, Mat] { type Repr[OO] = DistinctOps.this.Repr[OO] }
+
+  type Repr[O] <: akka.stream.scaladsl.FlowOps[O, Mat] {
+    type Repr[OO] <: DistinctOps.this.Repr[OO]
+  }
 
   protected def self: Repr[Out]
 
   def distinctBy[A](f: Out => A): Repr[Out] = self.via(Distinct(f))
   def distinct: Repr[Out] = distinctBy(identity)
+
 }
 
 final class SourceDistinctOps[Out, Mat](override protected val self: Source[Out, Mat]) extends DistinctOps[Out, Mat] {
-  override type Repr[+O] = Source[O, Mat]
+  override type Repr[O] = Source[O, Mat]
 }
 
 final class FlowDistinctOps[In, Out, Mat](override protected val self: Flow[In, Out, Mat]) extends DistinctOps[Out, Mat] {
-  override type Repr[+O] = Flow[In, O, Mat]
+  override type Repr[O] = Flow[In, O, Mat]
 }
 
 final class SubFlowDistinctOps[Out, Mat, F[+_], C](override val self: SubFlow[Out, Mat, F, C]) extends DistinctOps[Out, Mat] {
-  override type Repr[+O] = SubFlow[O, Mat, F, C]
+  override type Repr[O] = SubFlow[O, Mat, F, C]
 }
 
 trait ToDistinctOps {

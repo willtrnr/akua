@@ -4,7 +4,6 @@ import scala.util.control.NonFatal
 
 import java.util.{Set => JSet}
 
-import akka.NotUsed
 import akka.stream.scaladsl.{Flow, Source, SubFlow}
 import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
 import akka.stream.{Attributes, FlowShape, Inlet, Outlet}
@@ -69,37 +68,38 @@ private[akua] final class SpillingDistinct[A, K](ser: Serializer[K], extractKey:
 
 object SpillingDistinct {
 
-  def apply[A](ser: Serializer[A]): Flow[A, A, NotUsed] =
-    Flow.fromGraph(new SpillingDistinct(ser, identity[A]))
-
-  def apply[A, K](ser: Serializer[K], f: A => K): Flow[A, A, NotUsed] =
-    Flow.fromGraph(new SpillingDistinct(ser, f))
+  def apply[A, K](f: A => K)(implicit ser: Serializer[K]): SpillingDistinct[A, K] =
+    new SpillingDistinct(ser, f)
 
 }
 
-final class SourceSpillingDistinct[Out, Mat](self: Source[Out, Mat]) {
-  def spillingDistinct(implicit ser: Serializer[Out]): Source[Out, Mat] = self.via(SpillingDistinct(ser))
-  def spillingDistinctBy[A](f: Out => A)(implicit ser: Serializer[A]): Source[Out, Mat] = self.via(SpillingDistinct(ser, f))
+private[akua] trait SpillingDistinctOps[Out, Mat] {
+
+  type Repr[O] <: akka.stream.scaladsl.FlowOps[O, Mat] {
+    type Repr[OO] <: SpillingDistinctOps.this.Repr[OO]
+  }
+
+  protected def self: Repr[Out]
+
+  def distinctBy[A : Serializer](f: Out => A): Repr[Out] = self.via(SpillingDistinct(f))
+  def distinct(implicit ser: Serializer[Out]): Repr[Out] = distinctBy(identity)
+
 }
 
-trait ToSourceSpillingDistinct {
-  implicit def toSourceSpillingDistinct[Out, Mat](source: Source[Out, Mat]): SourceSpillingDistinct[Out, Mat] = new SourceSpillingDistinct(source)
+final class SourceSpillingDistinctOps[Out, Mat](override protected val self: Source[Out, Mat]) extends SpillingDistinctOps[Out, Mat] {
+  override type Repr[O] = Source[O, Mat]
 }
 
-final class FlowSpillingDistinct[In, Out, Mat](self: Flow[In, Out, Mat]) {
-  def spillingDistinct(implicit ser: Serializer[Out]): Flow[In, Out, Mat] = self.via(SpillingDistinct(ser))
-  def spillingDistinctBy[A](f: Out => A)(implicit ser: Serializer[A]): Flow[In, Out, Mat] = self.via(SpillingDistinct(ser, f))
+final class FlowSpillingDistinctOps[In, Out, Mat](override protected val self: Flow[In, Out, Mat]) extends SpillingDistinctOps[Out, Mat] {
+  override type Repr[O] = Flow[In, O, Mat]
 }
 
-trait ToFlowSpillingDistinct {
-  implicit def toFlowSpillingDistinct[In, Out, Mat](flow: Flow[In, Out, Mat]): FlowSpillingDistinct[In, Out, Mat] = new FlowSpillingDistinct(flow)
+final class SubFlowSpillingDistinctOps[Out, Mat, F[+_], C](override val self: SubFlow[Out, Mat, F, C]) extends SpillingDistinctOps[Out, Mat] {
+  override type Repr[O] = SubFlow[O, Mat, F, C]
 }
 
-final class SubFlowSpillingDistinct[Out, Mat, F[+_], C](self: SubFlow[Out, Mat, F, C]) {
-  def spillingDistinct(implicit ser: Serializer[Out]): SubFlow[Out, Mat, F, C] = self.via(SpillingDistinct(ser))
-  def spillingDistinctBy[A](f: Out => A)(implicit ser: Serializer[A]): SubFlow[Out, Mat, F, C] = self.via(SpillingDistinct(ser, f))
-}
-
-trait ToSubFlowSpillingDistinct {
-  implicit def toSubFlowSpillingDistinct[Out, Mat, F[+_], C](flow: SubFlow[Out, Mat, F, C]): SubFlowSpillingDistinct[Out, Mat, F, C] = new SubFlowSpillingDistinct(flow)
+trait ToSpillingDistinctOps {
+  implicit def toSourceSpillingDistinctOps[Out, Mat](source: Source[Out, Mat]): SourceSpillingDistinctOps[Out, Mat] = new SourceSpillingDistinctOps(source)
+  implicit def toFlowSpillingDistinctOps[In, Out, Mat](flow: Flow[In, Out, Mat]): FlowSpillingDistinctOps[In, Out, Mat] = new FlowSpillingDistinctOps(flow)
+  implicit def toSubFlowSpillingDistinctOps[Out, Mat, F[+_], C](sub: SubFlow[Out, Mat, F, C]): SubFlowSpillingDistinctOps[Out, Mat, F, C] = new SubFlowSpillingDistinctOps(sub)
 }

@@ -21,7 +21,7 @@ class MergeJoinSpec extends TestKit(ActorSystem("MergeJoinSpec")) with WordSpecL
 
     // FIXME: Broken
     "join sorted input" ignore {
-      MergeJoin(Source(List(1, 3, 4, 6, 8)), Source(List(2, 3, 6, 7, 9, 10, 11)))
+      MergeJoin.full(Source(List(1, 3, 4, 6, 8)), Source(List(2, 3, 6, 7, 9, 10, 11)))(identity, identity)
         .runWith(TestSink.probe[(Option[Int], Option[Int])])
         .request(Long.MaxValue)
         .expectNext((Some(1), None))

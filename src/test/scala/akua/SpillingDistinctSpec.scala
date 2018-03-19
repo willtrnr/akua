@@ -6,8 +6,9 @@ import akka.stream.scaladsl.Source
 import akka.stream.testkit.scaladsl.TestSink
 import akka.testkit.TestKit
 
-import org.mapdb.Serializer
 import org.scalatest.{BeforeAndAfterAll, WordSpecLike}
+
+import akua.serializer._
 
 class SpillingDistinctSpec extends TestKit(ActorSystem("SpillingDistinctSpec")) with WordSpecLike with BeforeAndAfterAll {
 
@@ -22,7 +23,7 @@ class SpillingDistinctSpec extends TestKit(ActorSystem("SpillingDistinctSpec")) 
 
     "filter distinct values" in {
       Source(List("aaa", "aab", "aba", "aaa", "baa", "aba", "aab", "aaa"))
-        .via(SpillingDistinct(Serializer.STRING))
+        .via(SpillingDistinct(identity))
         .runWith(TestSink.probe[String])
         .request(Long.MaxValue)
         .expectNext("aaa")
@@ -34,7 +35,7 @@ class SpillingDistinctSpec extends TestKit(ActorSystem("SpillingDistinctSpec")) 
 
     "filter distinct values based on a key" in {
       Source(List("a", "aa", "b", "bbb", "cc", "cccc", "a"))
-        .via(SpillingDistinct[String, Integer](Serializer.INTEGER, _.length))
+        .via(SpillingDistinct(_.length))
         .runWith(TestSink.probe[String])
         .request(Long.MaxValue)
         .expectNext("a")

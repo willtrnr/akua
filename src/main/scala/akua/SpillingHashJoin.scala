@@ -159,7 +159,9 @@ object SpillingHashJoin {
 
 private[akua] trait SpillingHashJoinOps[Out, Mat] {
 
-  type Repr[O] <: akka.stream.scaladsl.FlowOps[O, Mat] { type Repr[OO] = SpillingHashJoinOps.this.Repr[OO] }
+  type Repr[O] <: akka.stream.scaladsl.FlowOps[O, Mat] {
+    type Repr[OO] <: SpillingHashJoinOps.this.Repr[OO]
+  }
 
   protected def self: Repr[Out]
 

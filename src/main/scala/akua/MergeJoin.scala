@@ -1,109 +1,29 @@
 package akua
 
 import akka.NotUsed
-import akka.stream.scaladsl.{GraphDSL, Source}
+import akka.stream.scaladsl.{Flow, GraphDSL, SubFlow, Source}
 import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
-import akka.stream.{Attributes, FanInShape2, Inlet, Outlet, SourceShape}
+import akka.stream.{Attributes, FlowShape, Graph, Inlet, Outlet, SourceShape}
 
-// FIXME: Since the current item is flushed out after a match it won't work when the same item is emited multiple times
-private[akua] final class MergeJoin[L, R, A](extractKeyL: L => A, extractKeyR: R => A, ord: Ordering[A]) extends GraphStage[FanInShape2[L, R, (Option[L], Option[R])]] {
+private[akua] final class MergeJoin[L, R, A](extractKeyL: L => A, extractKeyR: R => A, ord: Ordering[A]) extends GraphStage[JoinShape[L, R]] {
 
-  val in0: Inlet[L] = Inlet("MergeJoin.in0")
-  val in1: Inlet[R] = Inlet("MergeJoin.in1")
-  val out: Outlet[(Option[L], Option[R])] = Outlet("MergeJoin.out")
+  val left: Inlet[L] = Inlet("MergeJoin.left")
+  val right: Inlet[R] = Inlet("MergeJoin.right")
+  val out: Outlet[JoinShape.Full[L, R]] = Outlet("MergeJoin.out")
 
-  override val shape: FanInShape2[L, R, (Option[L], Option[R])] = new FanInShape2(in0, in1, out)
+  override val shape: JoinShape[L, R] = JoinShape(left, right, out)
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with OutHandler {
 
-    private[this] var currentLeft: Option[(L, A)] = None
-    private[this] var currentRight: Option[(R, A)] = None
-
-    override def preStart(): Unit = {
-      pull(in0)
-      pull(in1)
-    }
-
-    private[this] def join(): Option[(Option[L], Option[R])] =
-      for ((l, lk) <- currentLeft; (r, rk) <- currentRight) yield {
-        if (ord.equiv(lk, rk)) {
-          currentLeft = None
-          currentRight = None
-          (Some(l), Some(r))
-        } else if (ord.lt(lk, rk)) {
-          currentLeft = None
-          (Some(l), None)
-        } else {
-          currentRight = None
-          (None, Some(r))
-        }
-      }
-
-    private[this] def drain(): Unit = {
-      emitMultiple(
-        out,
-        List(
-          join(),
-          currentLeft.map(l => (Some(l._1), None)),
-          currentRight.map(r => (None, Some(r._1)))
-        ).flatten,
-        () => {
-          if (!isClosed(in0)) {
-            setHandlers(in0, out, new InHandler with OutHandler {
-              override def onPush(): Unit = push(out, (Some(grab(in0)), None))
-              override def onPull(): Unit = if (!hasBeenPulled(in0)) pull(in0)
-              override def onUpstreamFinish(): Unit = completeStage()
-            })
-          } else if (!isClosed(in1)) {
-            setHandlers(in1, out, new InHandler with OutHandler {
-              override def onPush(): Unit = push(out, (None, Some(grab(in1))))
-              override def onPull(): Unit = if (!hasBeenPulled(in1)) pull(in1)
-              override def onUpstreamFinish(): Unit = completeStage()
-            })
-          } else {
-            completeStage()
-          }
-        }
-      )
-    }
-
-    setHandler(in0, new InHandler {
-
-      override def onPush(): Unit = {
-        val l = grab(in0)
-        val lk = extractKeyL(l)
-        currentLeft = Some((l, lk))
-        if (isAvailable(out)) onPull()
-      }
-
-      override def onUpstreamFinish(): Unit = {
-        drain()
-      }
-
+    setHandler(left, new InHandler {
+      override def onPush(): Unit = ()
     })
 
-    setHandler(in1, new InHandler {
-
-      override def onPush(): Unit = {
-        val r = grab(in1)
-        val rk = extractKeyR(r)
-        currentRight = Some((r, rk))
-        if (isAvailable(out)) onPull()
-      }
-
-      override def onUpstreamFinish(): Unit = {
-        drain()
-      }
-
+    setHandler(right, new InHandler {
+      override def onPush(): Unit = ()
     })
 
-    override def onPull(): Unit = {
-      for (p <- join()) {
-        push(out, p)
-        if (currentLeft.isEmpty) tryPull(in0)
-        if (currentRight.isEmpty) tryPull(in1)
-      }
-    }
+    override def onPull(): Unit = ()
 
     setHandler(out, this)
 
@@ -113,22 +33,85 @@ private[akua] final class MergeJoin[L, R, A](extractKeyL: L => A, extractKeyR: R
 
 object MergeJoin {
 
-  def apply[L, R, A](extractLeft: L => A, extractRight: R => A)(implicit ord: Ordering[A]): MergeJoin[L, R, A] =
-    new MergeJoin(extractLeft, extractRight, ord)
+  def apply[L, R, A](lf: L => A, rf: R => A)(implicit ord: Ordering[A]): MergeJoin[L, R, A] =
+    new MergeJoin(lf, rf, ord)
 
-  def apply[L, R, A](left: Source[L, _], fl: L => A, right: Source[R, _], fr: R => A)(implicit ord: Ordering[A]): Source[(Option[L], Option[R]), NotUsed] =
+  def full[L, R, A : Ordering](left: Source[L, _], right: Source[R, _])(lf: L => A, rf: R => A): Source[JoinShape.Full[L, R], NotUsed] =
     Source.fromGraph(GraphDSL.create() { implicit b =>
       import GraphDSL.Implicits._
-
-      val join = b.add(apply(fl, fr))
-
-      left  ~> join.in0
-      right ~> join.in1
-
+      val join = b.add(apply(lf, rf))
+      left  ~> join.left
+      right ~> join.right
       SourceShape(join.out)
     })
 
-  def apply[A](left: Source[A, _], right: Source[A, _])(implicit ord: Ordering[A]): Source[(Option[A], Option[A]), NotUsed] =
-    apply(left, identity[A], right, identity[A])
+  def inner[L, R, A : Ordering](left: Source[L, _], right: Source[R, _])(lf: L => A, rf: R => A): Source[JoinShape.Inner[L, R], NotUsed] =
+    full(left, right)(lf, rf) collect { case (Some(l), Some(r)) => (l, r) }
 
+  def left[L, R, A : Ordering](left: Source[L, _], right: Source[R, _])(lf: L => A, rf: R => A): Source[JoinShape.Left[L, R], NotUsed] =
+    full(left, right)(lf, rf) collect { case (Some(l), r) => (l, r) }
+
+  def right[L, R, A : Ordering](left: Source[L, _], right: Source[R, _])(lf: L => A, rf: R => A): Source[JoinShape.Right[L, R], NotUsed] =
+    full(left, right)(lf, rf) collect { case (l, Some(r)) => (l, r) }
+
+  def outer[L, R, A : Ordering](left: Source[L, _], right: Source[R, _])(lf: L => A, rf: R => A): Source[JoinShape.Outer[L, R], NotUsed] =
+    full(left, right)(lf, rf) collect {
+      case (Some(l), None) => Left(l)
+      case (None, Some(r)) => Right(r)
+    }
+
+}
+
+private[akua] trait MergeJoinOps[Out, Mat] {
+
+  type Repr[O] <: akka.stream.scaladsl.FlowOps[O, Mat] {
+    type Repr[OO] <: MergeJoinOps.this.Repr[OO]
+  }
+
+  protected def self: Repr[Out]
+
+  private[this] def fullJoinGraph[Out2, Mat2, A : Ordering](right: Graph[SourceShape[Out2], Mat2])(lf: Out => A, rf: Out2 => A): Graph[FlowShape[Out, JoinShape.Full[Out, Out2]], Mat2] =
+    GraphDSL.create(right) { implicit b => r =>
+      import GraphDSL.Implicits._
+      val join = b.add(MergeJoin(lf, rf))
+      r ~> join.right
+      FlowShape(join.left, join.out)
+    }
+
+  def fullMergeJoin[Out2, A : Ordering](right: Graph[SourceShape[Out2], _])(lf: Out => A, rf: Out2 => A): Repr[JoinShape.Full[Out, Out2]] =
+    self.via(fullJoinGraph(right)(lf, rf))
+
+  def innerMergeJoin[Out2, A : Ordering](right: Graph[SourceShape[Out2], _])(lf: Out => A, rf: Out2 => A): Repr[JoinShape.Inner[Out, Out2]] =
+    fullMergeJoin(right)(lf, rf) collect { case (Some(l), Some(r)) => (l, r) }
+
+  def leftMergeJoin[Out2, A : Ordering](right: Graph[SourceShape[Out2], _])(lf: Out => A, rf: Out2 => A): Repr[JoinShape.Left[Out, Out2]] =
+    fullMergeJoin(right)(lf, rf) collect { case (Some(l), r) => (l, r) }
+
+  def rightMergeJoin[Out2, A : Ordering](right: Graph[SourceShape[Out2], _])(lf: Out => A, rf: Out2 => A): Repr[JoinShape.Right[Out, Out2]] =
+    fullMergeJoin(right)(lf, rf) collect { case (l, Some(r)) => (l, r) }
+
+  def outerMergeJoin[Out2, A : Ordering](right: Graph[SourceShape[Out2], _])(lf: Out => A, rf: Out2 => A): Repr[JoinShape.Outer[Out, Out2]] =
+    fullMergeJoin(right)(lf, rf) collect {
+      case (Some(l), None) => Left(l)
+      case (None, Some(r)) => Right(r)
+    }
+
+}
+
+final class SourceMergeJoinOps[Out, Mat](override protected val self: Source[Out, Mat]) extends MergeJoinOps[Out, Mat] {
+  override type Repr[O] = Source[O, Mat]
+}
+
+final class FlowMergeJoinOps[In, Out, Mat](override protected val self: Flow[In, Out, Mat]) extends MergeJoinOps[Out, Mat] {
+  override type Repr[O] = Flow[In, O, Mat]
+}
+
+final class SubFlowMergeJoinOps[Out, Mat, F[+_], C](override protected val self: SubFlow[Out, Mat, F, C]) extends MergeJoinOps[Out, Mat] {
+  override type Repr[O] = SubFlow[O, Mat, F, C]
+}
+
+trait ToMergeJoinOps {
+  implicit def toSourceMergeJoinOps[Out, Mat](source: Source[Out, Mat]): SourceMergeJoinOps[Out, Mat] = new SourceMergeJoinOps(source)
+  implicit def toFlowMergeJoinOps[In, Out, Mat](flow: Flow[In, Out, Mat]): FlowMergeJoinOps[In, Out, Mat] = new FlowMergeJoinOps(flow)
+  implicit def toSubFlowMergeJoinOps[Out, Mat, F[+_], C](sub: SubFlow[Out, Mat, F, C]): SubFlowMergeJoinOps[Out, Mat, F, C] = new SubFlowMergeJoinOps(sub)
 }
