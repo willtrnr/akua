@@ -13,7 +13,7 @@ import org.mapdb.{DB, DBMaker, Serializer}
 
 import akua.serializer.StdSerializers
 
-private[akua] final class SpillingHashJoin[L, R, A](keySer: Serializer[A], valueSer: Serializer[R], extractKeyL: L => A, extractKeyR: R => A) extends GraphStage[JoinShape[L, R]] {
+private[akua] final class SpillingHashJoin[L, R, A](keySer: Serializer[A], valueSer: Serializer[R], extractKeyL: L => A, extractKeyR: R => A) extends GraphStage[JoinShape[L, R, JoinShape.Full[L, R]]] {
 
   import scala.collection.JavaConverters._
 
@@ -21,7 +21,7 @@ private[akua] final class SpillingHashJoin[L, R, A](keySer: Serializer[A], value
   val right: Inlet[R] = Inlet("SpillingHashJoin.right")
   val out: Outlet[JoinShape.Full[L, R]] = Outlet("SpillingHashJoin.out")
 
-  override val shape: JoinShape[L, R] = JoinShape(left, right, out)
+  override val shape: JoinShape[L, R, JoinShape.Full[L, R]] = JoinShape(left, right, out)
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with OutHandler {
 

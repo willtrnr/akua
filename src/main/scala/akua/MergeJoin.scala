@@ -2,18 +2,85 @@ package akua
 
 import akka.NotUsed
 import akka.stream.scaladsl.{Flow, GraphDSL, SubFlow, Source}
-import akka.stream.stage.{GraphStage, GraphStageLogic}
-import akka.stream.{Attributes, FanInShape2, FlowShape, Graph, Inlet, Outlet, SourceShape}
+import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
+import akka.stream.{Attributes, FlowShape, Graph, Inlet, Outlet, SourceShape}
 
-private[akua] final class MergeJoin[L, R, A](ord: Ordering[A]) extends GraphStage[FanInShape2[(A, Vector[L]), (A, Vector[R]), JoinShape.Full[L, R]]] {
+private[akua] final class MergeJoin[L, R, A](ord: Ordering[A]) extends GraphStage[JoinShape[(A, Vector[L]), (A, Vector[R]), JoinShape.Full[L, R]]] {
 
-  val in0: Inlet[(A, Vector[L])] = Inlet("MergeJoin.in0")
-  val in1: Inlet[(A, Vector[R])] = Inlet("MergeJoin.in1")
+  val left: Inlet[(A, Vector[L])] = Inlet("MergeJoin.left")
+  val right: Inlet[(A, Vector[R])] = Inlet("MergeJoin.right")
   val out: Outlet[JoinShape.Full[L, R]] = Outlet("MergeJoin.out")
 
-  override val shape: FanInShape2[(A, Vector[L]), (A, Vector[R]), JoinShape.Full[L, R]] = new FanInShape2(in0, in1, out)
+  override val shape: JoinShape[(A, Vector[L]), (A, Vector[R]), JoinShape.Full[L, R]] = JoinShape(left, right, out)
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
+
+    def compareToLeft(key: A, values: Vector[L]): InHandler with OutHandler = new InHandler with OutHandler {
+
+      override def onPush(): Unit = {
+        val (rk, rv) = grab(right)
+        if (ord.equiv(rk, key)) {
+          emitMultiple(out, for (l <- values; r <- rv) yield (Some(l), Some(r)), () => {
+            // TODO: We need to go back to some "idle" state, as in, pull a side again and come back to compare
+          })
+        } else if (ord.lt(rk, key)) {
+          emitMultiple(out, rv.map(v => (None, Some(v))), () => pull(right))
+        } else {
+          setHandlers(left, out, compareToRight(rk, rv))
+          setHandler(right, ignoreTerminateInput)
+          emitMultiple(out, values.map(v => (Some(v), None)))
+        }
+      }
+
+      override def onUpstreamFinish(): Unit = ()
+
+      override def onPull(): Unit = pull(right)
+
+    }
+
+    def compareToRight(key: A, values: Vector[R]): InHandler with OutHandler = new InHandler with OutHandler {
+
+      override def onPush(): Unit = {
+        val (lk, lv) = grab(left)
+        if (ord.equiv(lk, key)) {
+          emitMultiple(out, for (r <- values; l <- lv) yield (Some(l), Some(r)), () => {
+            // TODO: We need to go back to some "idle" state, as in, pull a side again and come back to compare
+          })
+        } else if (ord.lt(lk, key)) {
+          emitMultiple(out, lv.map(v => (Some(v), None)), () => pull(left))
+        } else {
+          setHandlers(right, out, compareToLeft(lk, lv))
+          setHandler(left, ignoreTerminateInput)
+          emitMultiple(out, values.map(v => (None, Some(v))))
+        }
+      }
+
+      override def onUpstreamFinish(): Unit = ()
+
+      override def onPull(): Unit = pull(left)
+
+    }
+
+    setHandler(left, new InHandler {
+
+      override def onPush(): Unit = {
+        val (k, v) = grab(left)
+        setHandlers(right, out, compareToLeft(k, v))
+        setHandler(left, ignoreTerminateInput)
+      }
+
+      override def onUpstreamFinish(): Unit = () // TODO: Initiate pass-through on right
+
+    })
+
+    setHandler(right, new InHandler {
+      override def onPush(): Unit = ()
+      override def onUpstreamFinish(): Unit = () // TODO: Initiate pass-through on left
+    })
+
+    setHandler(out, new OutHandler {
+      override def onPull(): Unit = pull(left)
+    })
 
   }
 
@@ -30,8 +97,8 @@ object MergeJoin {
       val groupL = b.add(FoldBy.grouping(lf))
       val groupR = b.add(FoldBy.grouping(rf))
       val join = b.add(apply[L, R, A])
-      left  ~> groupL ~> join.in0
-      right ~> groupR ~> join.in1
+      left  ~> groupL ~> join.left
+      right ~> groupR ~> join.right
       SourceShape(join.out)
     })
 
@@ -66,8 +133,8 @@ private[akua] trait MergeJoinOps[Out, Mat] {
       val groupL = b.add(FoldBy.grouping(lf))
       val groupR = b.add(FoldBy.grouping(rf))
       val join = b.add(MergeJoin[Out, Out2, A])
-               groupL ~> join.in0
-      right ~> groupR ~> join.in1
+               groupL ~> join.left
+      right ~> groupR ~> join.right
       FlowShape(groupL.in, join.out)
     }
 

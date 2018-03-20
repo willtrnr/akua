@@ -7,13 +7,13 @@ import akka.stream.scaladsl.{Flow, GraphDSL, SubFlow, Source}
 import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
 import akka.stream.{Attributes, FlowShape, Graph, Inlet, Outlet, SourceShape}
 
-private[akua] final class HashJoin[L, R, A](extractKeyL: L => A, extractKeyR: R => A) extends GraphStage[JoinShape[L, R]] {
+private[akua] final class HashJoin[L, R, A](extractKeyL: L => A, extractKeyR: R => A) extends GraphStage[JoinShape[L, R, JoinShape.Full[L, R]]] {
 
   val left: Inlet[L] = Inlet("HashJoin.left")
   val right: Inlet[R] = Inlet("HashJoin.right")
   val out: Outlet[JoinShape.Full[L, R]] = Outlet("HashJoin.out")
 
-  override val shape: JoinShape[L, R] = JoinShape(left, right, out)
+  override val shape: JoinShape[L, R, JoinShape.Full[L, R]] = JoinShape(left, right, out)
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with OutHandler {
 

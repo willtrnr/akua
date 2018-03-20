@@ -2,9 +2,9 @@ package akua
 
 import akka.stream.{FanInShape, Inlet, Outlet}
 
-class JoinShape[L, R](_init: FanInShape.Init[JoinShape.Full[L, R]] = FanInShape.Name[JoinShape.Full[L, R]]("Join")) extends FanInShape[JoinShape.Full[L, R]](_init) {
+class JoinShape[L, R, O](_init: FanInShape.Init[O] = FanInShape.Name[O]("Join")) extends FanInShape[O](_init) {
 
-  protected override def construct(init: FanInShape.Init[JoinShape.Full[L, R]]): JoinShape[L, R] = new JoinShape(init)
+  protected override def construct(init: FanInShape.Init[O]): JoinShape[L, R, O] = new JoinShape(init)
 
   val left: Inlet[L] = newInlet[L]("left")
   val right: Inlet[R] = newInlet[R]("right")
@@ -19,7 +19,7 @@ object JoinShape {
   type Right[L, R] = (Option[L], R)
   type Outer[L, R] = Either[L, R]
 
-  def apply[L, R](left: Inlet[L], right: Inlet[R], out: Outlet[Full[L, R]]): JoinShape[L, R] =
+  def apply[L, R, O](left: Inlet[L], right: Inlet[R], out: Outlet[O]): JoinShape[L, R, O] =
     new JoinShape(FanInShape.Ports(out, left :: right :: Nil))
 
 }
