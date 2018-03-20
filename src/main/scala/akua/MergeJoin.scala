@@ -2,136 +2,18 @@ package akua
 
 import akka.NotUsed
 import akka.stream.scaladsl.{Flow, GraphDSL, SubFlow, Source}
-import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler}
-import akka.stream.{Attributes, FlowShape, Graph, Inlet, Outlet, SourceShape}
+import akka.stream.stage.{GraphStage, GraphStageLogic}
+import akka.stream.{Attributes, FanInShape2, FlowShape, Graph, Inlet, Outlet, SourceShape}
 
-private[akua] final class MergeJoin[L, R, A](extractKeyL: L => A, extractKeyR: R => A, ord: Ordering[A]) extends GraphStage[JoinShape[L, R]] {
+private[akua] final class MergeJoin[L, R, A](ord: Ordering[A]) extends GraphStage[FanInShape2[(A, Vector[L]), (A, Vector[R]), JoinShape.Full[L, R]]] {
 
-  val left: Inlet[L] = Inlet("MergeJoin.left")
-  val right: Inlet[R] = Inlet("MergeJoin.right")
+  val in0: Inlet[(A, Vector[L])] = Inlet("MergeJoin.in0")
+  val in1: Inlet[(A, Vector[R])] = Inlet("MergeJoin.in1")
   val out: Outlet[JoinShape.Full[L, R]] = Outlet("MergeJoin.out")
 
-  override val shape: JoinShape[L, R] = JoinShape(left, right, out)
+  override val shape: FanInShape2[(A, Vector[L]), (A, Vector[R]), JoinShape.Full[L, R]] = new FanInShape2(in0, in1, out)
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) {
-
-    def collectGroup[T](in: Inlet[T], getKey: T => A)
-                       (key: A, buffer: Vector[T])
-                       (andThen: (A, Vector[T], Option[(A, T)]) => Unit): InHandler = new InHandler {
-
-      override def onPush(): Unit = {
-        val e = grab(in)
-        val k = getKey(e)
-        if (ord.equiv(k, key)) {
-          setHandler(in, collectGroup(in, getKey)(k, buffer :+ e)(andThen))
-        } else {
-          andThen(key, buffer, Some((k, e)))
-        }
-      }
-
-      override def onUpstreamFinish(): Unit = {
-        andThen(key, buffer, None)
-      }
-
-    }
-
-    val collectLeft = collectGroup(left, extractKeyL) _
-
-    val collectRight = collectGroup(right, extractKeyR) _
-
-    val switchToLeft: (A, Vector[R], Option[(A, R)]) => Unit = { (key, rows, next) =>
-      if (isClosed(left)) {
-        emitMultiple(
-          out,
-          rows.map(v => (None, Some(v))),
-          () => {
-            // TODO: Make this its own thing I guess
-            next map { case (k, v) =>
-              setHandler(right, collectRight(k, Vector(v))(switchToLeft))
-              setHandler(left, ignoreTerminateInput)
-            } getOrElse {
-              completeStage()
-            }
-          }
-        )
-      } else {
-        setHandler(left, collectLeft(key, Vector.empty)(outputLeft(rows, next)))
-        setHandler(right, ignoreTerminateInput)
-      }
-    }
-
-    val switchToRight: (A, Vector[L], Option[(A, L)]) => Unit = { (key, rows, next) =>
-      if (isClosed(right)) {
-        emitMultiple(
-          out,
-          rows.map(v => (Some(v), None)),
-          () => {
-            // TODO: Make this its own thing I guess
-            next map { case (k, v) =>
-              setHandler(left, collectLeft(k, Vector(v))(switchToRight))
-              setHandler(right, ignoreTerminateInput)
-            } getOrElse {
-              completeStage()
-            }
-          }
-        )
-      } else {
-        setHandler(left, ignoreTerminateInput)
-        setHandler(right, collectRight(key, Vector.empty)(outputRight(rows, next)))
-      }
-    }
-
-    val outputLeft = { (rightRows: Vector[R], rightNext: Option[(A, R)]) => (key: A, leftRows: Vector[L], leftNext: Option[(A, L)]) =>
-      emitMultiple(
-        out,
-        for (l <- leftRows; r <- rightRows) yield (Some(l), Some(r)),
-        () => {
-
-          // TODO
-        }
-      )
-    }
-
-    val outputRight = { (leftRows: Vector[L], leftNext: Option[(A, L)]) => (key: A, rightRows: Vector[R], rightNext: Option[(A, R)]) =>
-      emitMultiple(
-        out,
-        for (l <- leftRows; r <- rightRows) yield (Some(l), Some(r)),
-        () => {
-          // TODO
-        }
-      )
-    }
-
-    setHandler(left, new InHandler {
-
-      override def onPush(): Unit = {
-        val e = grab(left)
-        val k = extractKeyL(e)
-        setHandler(left, collectLeft(k, Vector(e))(switchToRight))
-        setHandler(right, ignoreTerminateInput)
-      }
-
-      override def onUpstreamFinish(): Unit = {
-        // TODO
-      }
-
-    })
-
-    setHandler(right, new InHandler {
-      override def onPush(): Unit = {
-        val e = grab(right)
-        val k = extractKeyR(e)
-        setHandler(left, ignoreTerminateInput)
-        setHandler(right, collectRight(k, Vector(e))(switchToLeft))
-      }
-
-      override def onUpstreamFinish(): Unit = {
-        // TODO
-      }
-
-    })
-
-    setHandler(out, eagerTerminateOutput)
 
   }
 
@@ -139,15 +21,17 @@ private[akua] final class MergeJoin[L, R, A](extractKeyL: L => A, extractKeyR: R
 
 object MergeJoin {
 
-  def apply[L, R, A](lf: L => A, rf: R => A)(implicit ord: Ordering[A]): MergeJoin[L, R, A] =
-    new MergeJoin(lf, rf, ord)
+  def apply[L, R, A](implicit ord: Ordering[A]): MergeJoin[L, R, A] =
+    new MergeJoin(ord)
 
   def full[L, R, A : Ordering](left: Source[L, _], right: Source[R, _])(lf: L => A, rf: R => A): Source[JoinShape.Full[L, R], NotUsed] =
     Source.fromGraph(GraphDSL.create() { implicit b =>
       import GraphDSL.Implicits._
-      val join = b.add(apply(lf, rf))
-      left  ~> join.left
-      right ~> join.right
+      val groupL = b.add(FoldBy.grouping(lf))
+      val groupR = b.add(FoldBy.grouping(rf))
+      val join = b.add(apply[L, R, A])
+      left  ~> groupL ~> join.in0
+      right ~> groupR ~> join.in1
       SourceShape(join.out)
     })
 
@@ -179,9 +63,12 @@ private[akua] trait MergeJoinOps[Out, Mat] {
   private[this] def fullJoinGraph[Out2, Mat2, A : Ordering](right: Graph[SourceShape[Out2], Mat2])(lf: Out => A, rf: Out2 => A): Graph[FlowShape[Out, JoinShape.Full[Out, Out2]], Mat2] =
     GraphDSL.create(right) { implicit b => r =>
       import GraphDSL.Implicits._
-      val join = b.add(MergeJoin(lf, rf))
-      r ~> join.right
-      FlowShape(join.left, join.out)
+      val groupL = b.add(FoldBy.grouping(lf))
+      val groupR = b.add(FoldBy.grouping(rf))
+      val join = b.add(MergeJoin[Out, Out2, A])
+               groupL ~> join.in0
+      right ~> groupR ~> join.in1
+      FlowShape(groupL.in, join.out)
     }
 
   def fullMergeJoin[Out2, A : Ordering](right: Graph[SourceShape[Out2], _])(lf: Out => A, rf: Out2 => A): Repr[JoinShape.Full[Out, Out2]] =
