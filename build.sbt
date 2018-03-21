@@ -4,6 +4,14 @@ import Common._
 import Dependencies._
 
 lazy val root = (project in file("."))
+  .settings(commonSettings)
+  .settings(
+    name := "root"
+  )
+  .dependsOn(akua)
+  .aggregate(akua)
+
+lazy val akua = (project in file("./akua"))
   .enablePlugins(BoilerplatePlugin)
   .settings(commonSettings)
   .settings(
