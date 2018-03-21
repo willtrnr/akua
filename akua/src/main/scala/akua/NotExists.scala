@@ -5,33 +5,33 @@ import scala.collection.mutable
 import akka.NotUsed
 import akka.stream.scaladsl.{Flow, GraphDSL, SubFlow, Source}
 import akka.stream.stage.{GraphStage, GraphStageLogic, InHandler, OutHandler}
-import akka.stream.{Attributes, FanInShape2, FlowShape, Graph, Inlet, Outlet, SourceShape}
+import akka.stream.{Attributes, FlowShape, Graph, Inlet, Outlet, SourceShape}
 
-private[akua] final class NotExists[A, B](extractKey: A => B) extends GraphStage[FanInShape2[A, B, A]] {
+private[akua] final class NotExists[A, B](extractKey: A => B) extends GraphStage[JoinShape[A, B, A]] {
 
-  val in0: Inlet[A] = Inlet("NotExists.in0")
-  val in1: Inlet[B] = Inlet("NotExists.in1")
+  val left: Inlet[A] = Inlet("NotExists.left")
+  val right: Inlet[B] = Inlet("NotExists.right")
   val out: Outlet[A] = Outlet("NotExists.out")
 
-  override val shape: FanInShape2[A, B, A] = new FanInShape2(in0, in1, out)
+  override val shape: JoinShape[A, B, A] = JoinShape(left, right, out)
 
   override def createLogic(inheritedAttributes: Attributes): GraphStageLogic = new GraphStageLogic(shape) with OutHandler {
 
     private[this] val keys: mutable.Set[B] = mutable.Set.empty
 
     override def preStart(): Unit = {
-      pull(in1)
+      pull(right)
     }
 
-    setHandler(in0, new InHandler {
+    setHandler(left, new InHandler {
 
       override def onPush(): Unit = {
-        val e = grab(in0)
+        val e = grab(left)
         val k = extractKey(e)
         if (!keys(k)) {
           push(out, e)
         } else {
-          pull(in0)
+          pull(left)
         }
       }
 
@@ -41,21 +41,21 @@ private[akua] final class NotExists[A, B](extractKey: A => B) extends GraphStage
 
     })
 
-    setHandler(in1, new InHandler {
+    setHandler(right, new InHandler {
 
       override def onPush(): Unit = {
-        keys += grab(in1)
-        pull(in1)
+        keys += grab(right)
+        pull(right)
       }
 
       override def onUpstreamFinish(): Unit = {
-        if (isAvailable(out)) pull(in0)
+        if (isAvailable(out)) pull(left)
       }
 
     })
 
     override def onPull(): Unit = {
-      if (isClosed(in1)) pull(in0)
+      if (isClosed(right)) pull(left)
     }
 
     setHandler(out, this)
@@ -72,8 +72,8 @@ object NotExists {
     Flow.fromGraph(GraphDSL.create() { implicit b =>
       import GraphDSL.Implicits._
       val e = b.add(apply(f))
-      keys ~> e.in1
-      FlowShape(e.in0, e.out)
+      keys ~> e.right
+      FlowShape(e.left, e.out)
     })
 
   def apply[A, B, Mat](values: Source[A, Mat], keys: Source[B, _])(f: A => B): Source[A, Mat] =
@@ -91,8 +91,8 @@ private[akua] trait NotExistsOps[Out, Mat] {
     GraphDSL.create(keys) { implicit b => k =>
       import GraphDSL.Implicits._
       val e = b.add(NotExists(f))
-      k ~> e.in1
-      FlowShape(e.in0, e.out)
+      k ~> e.right
+      FlowShape(e.left, e.out)
     }
 
   def notExists[Out2, A](keys: Graph[SourceShape[Out2], _])(f: Out => Out2): Repr[Out] =
