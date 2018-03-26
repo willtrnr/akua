@@ -28,6 +28,9 @@ trait StdSerializers {
   implicit val floatArraySerializer: Serializer[Array[Float]] = Serializer.FLOAT_ARRAY
   implicit val doubleArraySerializer: Serializer[Array[Double]] = Serializer.DOUBLE_ARRAY
 
+  implicit val localDateSerializer: Serializer[java.time.LocalDate] = longSerializer.xmap(java.time.LocalDate.ofEpochDay, _.toEpochDay)
+  implicit val instantSerializer: Serializer[java.time.Instant] = longSerializer.xmap(java.time.Instant.ofEpochMilli, _.toEpochMilli)
+
   implicit def optionSerializer[A](implicit s: Serializer[A]): Serializer[Option[A]] = new Serializer[Option[A]] {
 
     override def serialize(out: DataOutput2, value: Option[A]): Unit = {
