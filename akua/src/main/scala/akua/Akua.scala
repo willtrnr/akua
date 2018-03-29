@@ -6,4 +6,5 @@ object Akua extends
   ToExistsOps with
   ToHashJoinOps with
   ToNotExistsOps with
-  ToSpillingHashJoinOps
+  ToSpillingHashJoinOps with
+  ToSpillingDistinctOps

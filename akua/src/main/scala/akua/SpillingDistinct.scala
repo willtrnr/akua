@@ -81,8 +81,8 @@ private[akua] trait SpillingDistinctOps[Out, Mat] {
 
   protected def self: Repr[Out]
 
-  def distinctBy[A : Serializer](f: Out => A): Repr[Out] = self.via(SpillingDistinct(f))
-  def distinct(implicit ser: Serializer[Out]): Repr[Out] = distinctBy(identity)
+  def spillingDistinctBy[A : Serializer](f: Out => A): Repr[Out] = self.via(SpillingDistinct(f))
+  def spillingDistinct(implicit ser: Serializer[Out]): Repr[Out] = spillingDistinctBy(identity)
 
 }
 

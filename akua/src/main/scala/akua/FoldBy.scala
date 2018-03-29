@@ -87,6 +87,9 @@ private[akua] trait FoldByOps[Out, Mat] {
   def foldBy[A](getKey: Out => A)(f: (Out, Out) => Out): Repr[(A, Out)] =
     foldBy(getKey, identity)(f)
 
+  def groupingBy[A](getKey: Out => A): Repr[(A, Vector[Out])] =
+    self.via(FoldBy.grouping(getKey))
+
 }
 
 final class SourceFoldByOps[Out, Mat](override protected val self: Source[Out, Mat]) extends FoldByOps[Out, Mat] {
